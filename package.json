@@ -1,21 +1,38 @@
 {
-  "name": "functional javascript",
+  "name": "functional-javascript",
   "version": "0.0.0",
   "description": "",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node cyclic"
+    "start": "node todo"
+  },
+  "babel": {
+    "presets": [
+      "urban"
+    ]
+  },
+  "browserify": {
+    "plugins": [
+      "babelify"
+    ]
   },
   "author": "Matt Styles <matt@veryfizzyjelly.com> (http://github.com/mattstyles)",
   "license": "MIT",
   "dependencies": {
     "axios": "^0.12.0",
     "blessed": "^0.1.81",
+    "immutable": "^3.8.1",
     "keymirror": "^0.1.1",
+    "most": "^0.19.7",
+    "quay": "^0.5.0",
     "rx-lite": "^4.0.8"
   },
   "devDependencies": {
+    "babel-preset-urban": "^0.5.0",
+    "babelify": "^7.3.0",
+    "browserify": "^13.0.1",
+    "budo": "^8.3.0",
     "standard": "^7.1.2"
   }
 }

@@ -10,9 +10,9 @@
 'use strict'
 
 const blessed = require('blessed')
-const {Observable} = require('rx-lite')
 const keymirror = require('keymirror')
-const axios = require('axios')
+const most = require('most')
+const EventEmitter = require('events')
 
 let screen = blessed.screen({
   title: 'fold/scan test',
@@ -24,10 +24,8 @@ screen.debug('start')
 
 // Action enum
 const ACTIONS = keymirror({
-  'REFRESH': null,
-  'REQ_SUCCESS': null,
-  'REQ_FAIL': null,
-  'QUIT': null
+  'QUIT': null,
+  'KEYDOWN': null
 })
 
 function createDispatch (action, payload) {
@@ -43,92 +41,85 @@ function mapFullKey (keypress) {
  */
 
 // Dispatches keypress events
-// null -> Signal {Event}
-let keys = Observable
-  .fromEvent(screen, 'keypress', (ch, key) => {
+// null -> Cold Signal {Event}
+let rawKeypress = most
+  .fromEvent('keypress', screen)
+  .map(event => {
     return {
-      ch,
-      key
+      ch: event[0],
+      key: event[1]
     }
   })
 
-// Turn basic http request into a stream
-// String -> Signal {Event}
-function http (url) {
-  return Observable
-    .fromPromise(axios.get(url))
-}
+let keys = rawKeypress
+  .map(mapFullKey)
 
-// Accepts an initiator stream and a url to request against,
-// returns a stream with the response data
-// Signal | String -> Signal {Event}
-function request (keypress, url) {
-  return keypress
-    .map(key => url)
-    .flatMapLatest(http)
-}
+// Source for view observables
+let emitter = new EventEmitter()
 
 /**
  * Intents
  * Map event signals into dispatches
  */
 
-// Accepts an initiator streams and a url to request against,
-// outputs a string
-// Signal | String -> Signal {Dispatch}
-function nameIntent (signal, url) {
-  return request(signal, url)
-    .map(res => res.data.name)
-    .map(name => createDispatch(ACTIONS.REQ_SUCCESS, name))
-    .merge(signal.map(e => createDispatch(ACTIONS.REFRESH, null)))
-}
-
+// Turns an event into a dispatch
+// Signal {Event} -> Signal {Dispatch}
 function quit (signal) {
   return signal
     .map(key => createDispatch(ACTIONS.QUIT, null))
 }
 
-// Creates the name intent observable
+// Ensures that actions from the source emitter become dispatches
+// Signal {Event} -> Signal {Dispatch}
+function channel (emitter) {
+  let dispatchStream = most
+    .fromEvent('dispatch', emitter)
+
+  let actionStream = most
+    .fromEvent('action', emitter)
+    .map(createDispatch)
+
+  return most.merge(
+    dispatchStream,
+    actionStream
+  )
+}
+
+// Creates the intent stream
 // null -> Signal {Dispatch}
 function intent () {
-  let fullKeys = keys
-    .map(mapFullKey)
-
-  let refreshStream = fullKeys
-    .filter(key => key === 'r')
-
-  let quitStream = fullKeys
+  let quitStream = keys
     .filter(key => ['escape', 'q', 'C-c'].includes(key))
 
-  return Observable.merge(
-    nameIntent(refreshStream, 'http://uinames.com/api'),
-    quit(quitStream)
+  return most.merge(
+    quit(quitStream),
+    channel(emitter)
   )
 }
 
 /**
  * Model
  */
-let initialModel = 'Hit \'r\' to request a new name'
+let initialModel = `Hit q to quit
+Hit s to send an action
+Hit d to send a dispatch
+Check the debug log for output`
 
 /**
  * Update
  */
 
 // Takes the model and the action
-// Model, Action -> Model
+// Model, Dispatch -> Model
 function update (model, dispatch) {
+  screen.debug(dispatch)
   if (dispatch.action === ACTIONS.QUIT) {
     screen.debug('quitting...')
     process.exit(0)
   }
 
-  if (dispatch.action === ACTIONS.REFRESH) {
-    return 'Refreshing...'
-  }
-
-  if (dispatch.action === ACTIONS.REQ_SUCCESS) {
-    return dispatch.payload
+  if (dispatch.action === ACTIONS.KEYDOWN) {
+    screen.debug('keydown:', dispatch.payload)
   }
 
   return model
@@ -145,14 +136,28 @@ function view (model) {
     top: 0,
     left: 0,
     width: '100%',
-    height: 1,
+    height: 4,
     content: model
   })
   screen.append(text)
   screen.render()
 
+  keys
+    .filter(k => k === 's')
+    .observe(key => {
+      emitter.emit('action', ACTIONS.KEYDOWN)
+    })
+
+  keys
+    .filter(k => k === 'd')
+    .observe(key => {
+      emitter.emit('dispatch', createDispatch(ACTIONS.KEYDOWN, {
+        foo: 'foo',
+        bar: 'bar'
+      }))
+    })
+
   return (previous, current) => {
-    screen.debug(previous, ':', current)
     text.setContent(current)
     screen.render()
   }
@@ -169,7 +174,7 @@ function main (model, update, intent, sink) {
   let view = sink(model)
   intent()
     .scan(update, model)
-    .subscribe(current => {
+    .observe(current => {
       view(previous, current)
       previous = current
     })
